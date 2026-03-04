@@ -45,6 +45,11 @@ public class Expense {
     @JoinColumn(name = "group_id", nullable = false)
     private Group group;
 
+    // Who created/added this expense
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", nullable = false)
+    private User createdBy;
+
     // Individual items in this expense
     @OneToMany(mappedBy = "expense", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default

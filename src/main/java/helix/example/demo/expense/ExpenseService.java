@@ -30,17 +30,33 @@ public class ExpenseService {
     public ExpenseDTOs.ExpenseResponse createManualExpense(
             ExpenseDTOs.ManualExpenseRequest request, String userEmail) {
 
-        User paidBy = getUserByEmail(userEmail);
+        User loggedInUser = getUserByEmail(userEmail);
         Group group = getGroupById(request.getGroupId());
-        validateUserInGroup(paidBy, group);
+
+        // Any member can add expense — not just creator
+        validateUserInGroup(loggedInUser, group);
+
+        // Who paid — if not specified, logged in user paid
+        User paidBy;
+        if (request.getPaidByEmail() != null && !request.getPaidByEmail().isEmpty()) {
+            paidBy = userRepository.findByEmail(request.getPaidByEmail())
+                    .orElseThrow(() -> new RuntimeException(
+                            "User not found with email: " + request.getPaidByEmail()));
+            // Make sure paidBy person is also in the group
+            validateUserInGroup(paidBy, group);
+        } else {
+            paidBy = loggedInUser;
+        }
 
         Expense expense = Expense.builder()
                 .title(request.getTitle())
                 .totalAmount(request.getTotalAmount())
                 .expenseType(Expense.ExpenseType.MANUAL)
                 .paidBy(paidBy)
+                .createdBy(loggedInUser)
                 .group(group)
-                .notes(request.getNotes())
+                .notes(request.getNotes() != null
+                        ? request.getNotes() : request.getDescription())
                 .build();
 
         // Add items if provided
@@ -55,7 +71,6 @@ public class ExpenseService {
                                 .expense(expense)
                                 .build();
 
-                        // Assign to user if email provided
                         if (itemReq.getAssignedToEmail() != null
                                 && !itemReq.getAssignedToEmail().isEmpty()) {
                             userRepository.findByEmail(itemReq.getAssignedToEmail())
@@ -128,6 +143,7 @@ public class ExpenseService {
                 .totalAmount(request.getTotalAmount())
                 .expenseType(type)
                 .paidBy(paidBy)
+                .createdBy(paidBy)
                 .group(group)
                 .notes(request.getNotes())
                 .build();
@@ -227,6 +243,7 @@ public class ExpenseService {
         return ExpenseDTOs.ExpenseResponse.builder()
                 .id(expense.getId().toString())
                 .title(expense.getTitle())
+                .description(expense.getNotes())
                 .totalAmount(expense.getTotalAmount())
                 .expenseType(expense.getExpenseType().name())
                 .paidBy(expense.getPaidBy().getName())
