@@ -23,9 +23,15 @@ public class ExpenseDTOs {
         @NotBlank(message = "Group ID is required")
         private String groupId;
 
+        // Who paid — if not provided, logged in user is assumed to have paid
+        private String paidByEmail;
+
+        // Description of the expense
+        private String description;
+
+        // Notes/additional info
         private String notes;
 
-        // List of items entered manually
         private List<ItemRequest> items;
     }
 
@@ -75,6 +81,7 @@ public class ExpenseDTOs {
     public static class ExpenseResponse {
         private String id;
         private String title;
+        private String description;      // ← add this
         private Double totalAmount;
         private String expenseType;
         private String paidBy;
