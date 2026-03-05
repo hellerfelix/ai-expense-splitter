@@ -5,12 +5,12 @@ import helix.example.demo.auth.User;
 import helix.example.demo.auth.UserRepository;
 import helix.example.demo.group.Group;
 import helix.example.demo.group.GroupRepository;
+import helix.example.demo.split.SplitRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -24,6 +24,7 @@ public class ExpenseService {
     private final UserRepository userRepository;
     private final GroupRepository groupRepository;
     private final AiService aiService;
+    private final SplitRepository splitRepository;
 
     // ─── 1. Manual Expense Entry ──────────────────────────────────────────
 
@@ -33,16 +34,13 @@ public class ExpenseService {
         User loggedInUser = getUserByEmail(userEmail);
         Group group = getGroupById(request.getGroupId());
 
-        // Any member can add expense — not just creator
         validateUserInGroup(loggedInUser, group);
 
-        // Who paid — if not specified, logged in user paid
         User paidBy;
         if (request.getPaidByEmail() != null && !request.getPaidByEmail().isEmpty()) {
             paidBy = userRepository.findByEmail(request.getPaidByEmail())
                     .orElseThrow(() -> new RuntimeException(
                             "User not found with email: " + request.getPaidByEmail()));
-            // Make sure paidBy person is also in the group
             validateUserInGroup(paidBy, group);
         } else {
             paidBy = loggedInUser;
@@ -59,7 +57,6 @@ public class ExpenseService {
                         ? request.getNotes() : request.getDescription())
                 .build();
 
-        // Add items if provided
         if (request.getItems() != null && !request.getItems().isEmpty()) {
             List<ExpenseItem> items = request.getItems().stream()
                     .map(itemReq -> {
@@ -92,12 +89,10 @@ public class ExpenseService {
     public ExpenseDTOs.AiExtractedExpense extractFromNaturalLanguage(
             ExpenseDTOs.NaturalLanguageRequest request, String userEmail) {
 
-        // Validate user and group first
         User user = getUserByEmail(userEmail);
         Group group = getGroupById(request.getGroupId());
         validateUserInGroup(user, group);
 
-        // Call AI to extract expense details
         return aiService.extractFromNaturalLanguage(request.getText());
     }
 
@@ -106,7 +101,6 @@ public class ExpenseService {
     public ExpenseDTOs.AiExtractedExpense extractFromReceipt(
             MultipartFile file, String groupId, String userEmail) {
 
-        // Validate file
         if (file.isEmpty()) {
             throw new RuntimeException("Please upload a valid image file");
         }
@@ -117,33 +111,40 @@ public class ExpenseService {
                     "Invalid file type. Please upload an image (JPG, PNG)");
         }
 
-        // Validate user and group
         User user = getUserByEmail(userEmail);
         Group group = getGroupById(groupId);
         validateUserInGroup(user, group);
 
-        // Call AI to extract from receipt
         return aiService.extractFromReceipt(file);
     }
 
     // ─── 4. Save AI Extracted Expense ────────────────────────────────────
-    // Called after user reviews and confirms AI extracted items
 
     public ExpenseDTOs.ExpenseResponse saveAiExtractedExpense(
             ExpenseDTOs.ManualExpenseRequest request,
             String userEmail,
             Expense.ExpenseType type) {
 
-        User paidBy = getUserByEmail(userEmail);
+        User loggedInUser = getUserByEmail(userEmail);
         Group group = getGroupById(request.getGroupId());
-        validateUserInGroup(paidBy, group);
+        validateUserInGroup(loggedInUser, group);
+
+        User paidBy;
+        if (request.getPaidByEmail() != null && !request.getPaidByEmail().isEmpty()) {
+            paidBy = userRepository.findByEmail(request.getPaidByEmail())
+                    .orElseThrow(() -> new RuntimeException(
+                            "User not found with email: " + request.getPaidByEmail()));
+            validateUserInGroup(paidBy, group);
+        } else {
+            paidBy = loggedInUser;
+        }
 
         Expense expense = Expense.builder()
                 .title(request.getTitle())
                 .totalAmount(request.getTotalAmount())
                 .expenseType(type)
                 .paidBy(paidBy)
-                .createdBy(paidBy)
+                .createdBy(loggedInUser)
                 .group(group)
                 .notes(request.getNotes())
                 .build();
@@ -198,7 +199,6 @@ public class ExpenseService {
         Expense expense = expenseRepository.findById(UUID.fromString(expenseId))
                 .orElseThrow(() -> new RuntimeException("Expense not found"));
 
-        // Only person who paid can delete
         if (!expense.getPaidBy().getEmail().equals(userEmail)) {
             throw new RuntimeException("Only the person who paid can delete this expense");
         }
@@ -253,6 +253,7 @@ public class ExpenseService {
                 .items(items)
                 .notes(expense.getNotes())
                 .createdAt(expense.getCreatedAt())
+                .splitCount(splitRepository.countByExpense(expense))
                 .build();
     }
 }
