@@ -27,7 +27,6 @@ public class SplitService {
     private final UserRepository userRepository;
 
     // ─── 1. Equal Split ───────────────────────────────────────────────────
-    // Splits expense equally among all group members
 
     @Transactional
     public List<SplitDTOs.SplitResponse> splitEqually(
@@ -37,16 +36,15 @@ public class SplitService {
         validateExpenseOwner(expense, userEmail);
 
         // Check if already split
-        if (splitRepository.existsByExpenseId(expense.getId())) {
+        if (splitRepository.existsByExpense(expense)) {
             throw new RuntimeException(
-                    "This expense has already been split. Delete existing split first.");
+                    "This expense has already been split.");
         }
 
         Group group = expense.getGroup();
         List<User> members = group.getMembers();
         User paidBy = expense.getPaidBy();
 
-        // Calculate each person's share
         double totalAmount = expense.getTotalAmount();
         double sharePerPerson = Math.round(
                 (totalAmount / members.size()) * 100.0) / 100.0;
@@ -54,7 +52,6 @@ public class SplitService {
         List<Split> splits = new ArrayList<>();
 
         for (User member : members) {
-            // Skip the person who paid
             if (member.getId().equals(paidBy.getId())) continue;
 
             Split split = Split.builder()
@@ -76,7 +73,6 @@ public class SplitService {
     }
 
     // ─── 2. Item Wise Split ───────────────────────────────────────────────
-    // Splits expense based on who ordered what
 
     @Transactional
     public List<SplitDTOs.SplitResponse> splitByItems(
@@ -85,13 +81,11 @@ public class SplitService {
         Expense expense = getExpenseById(expenseId);
         validateExpenseOwner(expense, userEmail);
 
-        // Check if already split
-        if (splitRepository.existsByExpenseId(expense.getId())) {
+        if (splitRepository.existsByExpense(expense)) {
             throw new RuntimeException(
                     "This expense has already been split.");
         }
 
-        // Check all items are assigned
         List<ExpenseItem> items = expense.getItems();
         boolean allAssigned = items.stream()
                 .allMatch(item -> item.getAssignedTo() != null);
@@ -104,20 +98,15 @@ public class SplitService {
         User paidBy = expense.getPaidBy();
         Group group = expense.getGroup();
 
-        // Calculate how much each person owes
         Map<User, Double> amountPerPerson = new HashMap<>();
 
         for (ExpenseItem item : items) {
             User assignedTo = item.getAssignedTo();
-
-            // Skip if item assigned to person who paid
             if (assignedTo.getId().equals(paidBy.getId())) continue;
-
             double itemTotal = item.getPrice() * item.getQuantity();
             amountPerPerson.merge(assignedTo, itemTotal, Double::sum);
         }
 
-        // Create splits
         List<Split> splits = new ArrayList<>();
         for (Map.Entry<User, Double> entry : amountPerPerson.entrySet()) {
             Split split = Split.builder()
@@ -138,59 +127,80 @@ public class SplitService {
     }
 
     // ─── 3. Get Group Balances ────────────────────────────────────────────
-    // Shows who owes whom in the group
 
     public SplitDTOs.GroupBalanceSummary getGroupBalances(
             String groupId, String userEmail) {
 
         Group group = getGroupById(groupId);
-
-        // Get all unsettled splits in group
         List<Split> unsettledSplits = splitRepository
                 .findByGroupAndSettled(group, false);
 
-        // Group splits by owesBy -> owesTo pair
-        Map<String, List<Split>> splitsByPair = unsettledSplits.stream()
-                .collect(Collectors.groupingBy(s ->
-                        s.getOwesBy().getId() + "-" + s.getOwesTo().getId()));
+        Map<String, Double> netBalances = new HashMap<>();
+        Map<String, List<Split>> splitsByKey = new HashMap<>();
+
+        for (Split split : unsettledSplits) {
+            String emailA = split.getOwesBy().getEmail();
+            String emailB = split.getOwesTo().getEmail();
+
+            String key = emailA.compareTo(emailB) < 0
+                    ? emailA + ":" + emailB
+                    : emailB + ":" + emailA;
+
+            double direction = emailA.compareTo(emailB) < 0
+                    ? split.getAmount()
+                    : -split.getAmount();
+
+            netBalances.merge(key, direction, Double::sum);
+            splitsByKey.computeIfAbsent(key, k -> new ArrayList<>()).add(split);
+        }
 
         List<SplitDTOs.BalanceResponse> balances = new ArrayList<>();
 
-        for (Map.Entry<String, List<Split>> entry : splitsByPair.entrySet()) {
-            List<Split> pairSplits = entry.getValue();
-            Split first = pairSplits.get(0);
+        for (Map.Entry<String, Double> entry : netBalances.entrySet()) {
+            double netAmount = entry.getValue();
+            if (Math.abs(netAmount) < 0.01) continue;
 
-            // Sum up total amount for this pair
-            double totalAmount = pairSplits.stream()
-                    .mapToDouble(Split::getAmount)
-                    .sum();
-            totalAmount = Math.round(totalAmount * 100.0) / 100.0;
+            String[] emails = entry.getKey().split(":");
+            String owesByEmail, owesToEmail;
 
-            List<SplitDTOs.SplitResponse> splitResponses = pairSplits.stream()
+            if (netAmount > 0) {
+                owesByEmail = emails[0];
+                owesToEmail = emails[1];
+            } else {
+                owesByEmail = emails[1];
+                owesToEmail = emails[0];
+                netAmount = -netAmount;
+            }
+
+            User owesBy = userRepository.findByEmail(owesByEmail)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+            User owesTo = userRepository.findByEmail(owesToEmail)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            List<SplitDTOs.SplitResponse> splitResponses = splitsByKey
+                    .get(entry.getKey()).stream()
                     .map(this::mapToSplitResponse)
                     .collect(Collectors.toList());
 
             balances.add(SplitDTOs.BalanceResponse.builder()
-                    .owesBy(first.getOwesBy().getName())
-                    .owesByEmail(first.getOwesBy().getEmail())
-                    .owesTo(first.getOwesTo().getName())
-                    .owesToEmail(first.getOwesTo().getEmail())
-                    .totalAmount(totalAmount)
+                    .owesBy(owesBy.getName())
+                    .owesByEmail(owesByEmail)
+                    .owesTo(owesTo.getName())
+                    .owesToEmail(owesToEmail)
+                    .totalAmount(Math.round(netAmount * 100.0) / 100.0)
                     .splits(splitResponses)
                     .build());
         }
 
-        // Calculate total unsettled amount in group
         double totalUnsettled = balances.stream()
                 .mapToDouble(SplitDTOs.BalanceResponse::getTotalAmount)
                 .sum();
-        totalUnsettled = Math.round(totalUnsettled * 100.0) / 100.0;
 
         return SplitDTOs.GroupBalanceSummary.builder()
                 .groupId(groupId)
                 .groupName(group.getName())
                 .balances(balances)
-                .totalUnsettled(totalUnsettled)
+                .totalUnsettled(Math.round(totalUnsettled * 100.0) / 100.0)
                 .build();
     }
 
@@ -203,10 +213,10 @@ public class SplitService {
         Split split = splitRepository.findById(UUID.fromString(request.getSplitId()))
                 .orElseThrow(() -> new RuntimeException("Split not found"));
 
-        // Only person who owes can settle
-        if (!split.getOwesBy().getEmail().equals(userEmail)) {
+        if (!split.getOwesBy().getEmail().equals(userEmail) &&
+                !split.getOwesTo().getEmail().equals(userEmail)) {
             throw new RuntimeException(
-                    "Only the person who owes can mark this as settled");
+                    "Only members involved in this split can settle it");
         }
 
         if (split.getSettled()) {
@@ -223,8 +233,8 @@ public class SplitService {
     // ─── 5. Get Expense Splits ────────────────────────────────────────────
 
     public List<SplitDTOs.SplitResponse> getExpenseSplits(String expenseId) {
-        List<Split> splits = splitRepository
-                .findByExpenseId(UUID.fromString(expenseId));
+        Expense expense = getExpenseById(expenseId);
+        List<Split> splits = splitRepository.findByExpense(expense);
         return splits.stream()
                 .map(this::mapToSplitResponse)
                 .collect(Collectors.toList());
@@ -245,7 +255,6 @@ public class SplitService {
     private void validateExpenseOwner(Expense expense, String userEmail) {
         boolean isPaidBy = expense.getPaidBy().getEmail().equals(userEmail);
         boolean isCreatedBy = expense.getCreatedBy().getEmail().equals(userEmail);
-
         if (!isPaidBy && !isCreatedBy) {
             throw new RuntimeException(
                     "Only the person who paid or created this expense can split it");
