@@ -45,6 +45,9 @@ export const groupAPI = {
   getAll: () => api.get('/groups'),
   getById: (id) => api.get(`/groups/${id}`),
   addMember: (id, data) => api.post(`/groups/${id}/members`, data),
+  // inside groupAPI:
+update: (id, data) => api.put(`/groups/${id}`, data),
+delete: (id) => api.delete(`/groups/${id}`),
 };
 
 // ─── Expense APIs ─────────────────────────────────────────
@@ -56,7 +59,10 @@ export const expenseAPI = {
   }),
   saveAiExpense: (data, type) => api.post(`/expenses/save-ai?type=${type}`, data),
   getGroupExpenses: (groupId) => api.get(`/expenses/group/${groupId}`),
+  updateExpense: (id, data) => api.put(`/expenses/${id}`, data),
   deleteExpense: (id) => api.delete(`/expenses/${id}`),
+  // inside expenseAPI:
+getRecent: () => api.get('/expenses/recent'),
 };
 
 // ─── Split APIs ───────────────────────────────────────────
@@ -66,6 +72,13 @@ export const splitAPI = {
   getBalances: (groupId) => api.get(`/splits/balances/${groupId}`),
   settle: (data) => api.post('/splits/settle', data),
   getExpenseSplits: (expenseId) => api.get(`/splits/expense/${expenseId}`),
+  // inside splitAPI:
+splitCustom: (expenseId, data) => api.post(`/splits/custom/${expenseId}`, data),
 };
 
+export const profileAPI = {
+    changePassword: (data) => api.put('/auth/change-password', data),
+  };
+
+  
 export default api;
