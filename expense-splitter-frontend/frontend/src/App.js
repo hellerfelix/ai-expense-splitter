@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import Support from './pages/Support';
 
 // Pages (we'll create these next)
 import './index.css';
@@ -9,6 +10,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import GroupDetail from './pages/GroupDetail';
 import AddExpense from './pages/AddExpense';
+import Profile from './pages/Profile';
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -36,6 +38,12 @@ function AppRoutes() {
       <Route path="/group/:id/add-expense" element={
         <ProtectedRoute><AddExpense /></ProtectedRoute>
       } />
+      <Route path="/profile" element={
+  <ProtectedRoute><Profile /></ProtectedRoute>
+} />
+<Route path="/support" element={
+  <ProtectedRoute><Support /></ProtectedRoute>
+} />
     </Routes>
   );
 }

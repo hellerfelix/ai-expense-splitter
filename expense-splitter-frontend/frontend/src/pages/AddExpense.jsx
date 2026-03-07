@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { groupAPI, expenseAPI, splitAPI } from "../services/api";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 
 export default function AddExpense() {
   const { id } = useParams();
@@ -12,14 +12,17 @@ export default function AddExpense() {
   const [activeTab, setActiveTab] = useState("manual");
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [splitMethod, setSplitMethod] = useState("equal");
+
+  // Split state
+  const [paidByEmail, setPaidByEmail] = useState("");
+  const [splitMembers, setSplitMembers] = useState([]); // empty = all members
+  const [showSplitDropdown, setShowSplitDropdown] = useState(false);
 
   // Manual form
   const [title, setTitle] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
-  const [paidByEmail, setPaidByEmail] = useState("");
   const [description, setDescription] = useState("");
-  const [items, setItems] = useState([{ itemName: "", price: "", quantity: 1 }]);
+  
 
   // Natural language
   const [naturalText, setNaturalText] = useState("");
@@ -27,10 +30,41 @@ export default function AddExpense() {
   const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
-    groupAPI.getById(id).then((res) => setGroup(res.data));
+    groupAPI.getById(id).then((res) => {
+      setGroup(res.data);
+    });
     const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
     setPaidByEmail(savedUser.email || "");
   }, [id]);
+
+  // Close split dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = () => setShowSplitDropdown(false);
+    if (showSplitDropdown) document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [showSplitDropdown]);
+
+  const toggleSplitMember = (email) => {
+    setSplitMembers(prev =>
+      prev.includes(email)
+        ? prev.filter(e => e !== email)
+        : [...prev, email]
+    );
+  };
+
+  const getSplitLabel = () => {
+    if (splitMembers.length === 0) return "Equally (All)";
+    if (splitMembers.length === 1) {
+      const m = group?.members?.find(m => m.email === splitMembers[0]);
+      return m ? (m.email === user?.email ? "You" : m.name) : "1 member";
+    }
+    return `${splitMembers.length} members`;
+  };
+
+  const getSplitMembersToUse = () => {
+    if (splitMembers.length === 0) return group?.members?.map(m => m.email) || [];
+    return splitMembers;
+  };
 
   // ── Manual Submit ──
   const handleManualSubmit = async () => {
@@ -40,23 +74,22 @@ export default function AddExpense() {
     }
     setLoading(true);
     try {
-      const validItems = items.filter(i => i.itemName && i.price);
-      const expenseRes = await expenseAPI.createManual({
-        title,
-        totalAmount: parseFloat(totalAmount),
-        groupId: id,
-        paidByEmail,
-        description,
-        items: validItems.map(i => ({
-          itemName: i.itemName,
-          price: parseFloat(i.price),
-          quantity: parseInt(i.quantity) || 1,
-        }))
-      });
+        const expenseRes = await expenseAPI.createManual({
+            title,
+            totalAmount: parseFloat(totalAmount),
+            groupId: id,
+            paidByEmail,
+            description,
+          });
 
-      // Auto split equally if selected
-      if (splitMethod === "equal") {
+      const membersToSplit = getSplitMembersToUse();
+      const allMembers = group?.members?.map(m => m.email) || [];
+      const isAllMembers = membersToSplit.length === allMembers.length;
+
+      if (isAllMembers) {
         await splitAPI.splitEqually(expenseRes.data.id);
+      } else {
+        await splitAPI.splitCustom(expenseRes.data.id, { memberEmails: membersToSplit });
       }
 
       navigate(`/group/${id}`);
@@ -72,10 +105,7 @@ export default function AddExpense() {
     if (!naturalText.trim()) return;
     setAiLoading(true);
     try {
-      const res = await expenseAPI.createNatural({
-        text: naturalText,
-        groupId: id,
-      });
+      const res = await expenseAPI.createNatural({ text: naturalText, groupId: id });
       setAiResult(res.data);
     } catch (err) {
       alert(err.response?.data?.message || "AI processing failed");
@@ -101,10 +131,7 @@ export default function AddExpense() {
         }))
       }, "NATURAL_LANGUAGE");
 
-      if (splitMethod === "equal") {
-        await splitAPI.splitEqually(expenseRes.data.id);
-      }
-
+      await splitAPI.splitEqually(expenseRes.data.id);
       navigate(`/group/${id}`);
     } catch (err) {
       alert(err.response?.data?.message || "Failed to save expense");
@@ -113,49 +140,99 @@ export default function AddExpense() {
     }
   };
 
-  // ── Item helpers ──
-  const addItem = () => setItems([...items, { itemName: "", price: "", quantity: 1 }]);
-  const removeItem = (index) => setItems(items.filter((_, i) => i !== index));
-  const updateItem = (index, field, value) => {
-    const updated = [...items];
-    updated[index][field] = value;
-    setItems(updated);
-  };
 
-  // ── Split Method Selector ──
-  const SplitMethodSelector = () => (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-3">
-        Split Method
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          type="button"
-          onClick={() => setSplitMethod("equal")}
-          className={`p-4 rounded-xl border-2 text-left transition ${
-            splitMethod === "equal"
-              ? "border-purple-500 bg-purple-50"
-              : "border-gray-200 hover:border-gray-300"
-          }`}>
-          <p className="font-semibold text-gray-800">⚖️ Split Equally</p>
-          <p className="text-xs text-gray-500 mt-1">
-            Divide equally among all members
-          </p>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSplitMethod("none")}
-          className={`p-4 rounded-xl border-2 text-left transition ${
-            splitMethod === "none"
-              ? "border-purple-500 bg-purple-50"
-              : "border-gray-200 hover:border-gray-300"
-          }`}>
-          <p className="font-semibold text-gray-800">⏭️ Split Later</p>
-          <p className="text-xs text-gray-500 mt-1">
-            Add expense without splitting now
-          </p>
-        </button>
+  
+  
+
+  // ── Paid By + Split Row ──
+  const PaidBySplitRow = () => (
+    <div className="rounded-2xl border-2 border-purple-100 bg-purple-50 p-4">
+      <div className="flex items-center gap-2 flex-wrap">
+
+        {/* Paid By */}
+        <span className="text-sm font-semibold text-gray-700">Paid by</span>
+        <select
+          value={paidByEmail}
+          onChange={(e) => setPaidByEmail(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-purple-200 bg-white text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer">
+          {group?.members?.map((member) => (
+            <option key={member.id} value={member.email}>
+              {member.email === user?.email ? "You" : member.name}
+            </option>
+          ))}
+        </select>
+
+        <span className="text-sm font-semibold text-gray-700">and split</span>
+
+        {/* Split Among */}
+        <div className="relative" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => setShowSplitDropdown(!showSplitDropdown)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-purple-200 bg-white text-sm font-semibold text-gray-800 hover:border-purple-400 transition">
+            {getSplitLabel()}
+            <ChevronDown size={14} className={`transition-transform ${showSplitDropdown ? "rotate-180" : ""}`} />
+          </button>
+
+          {showSplitDropdown && (
+            <div className="absolute top-12 left-0 bg-white rounded-2xl shadow-xl border border-gray-100 z-30 w-52 overflow-hidden">
+              <p className="text-xs font-semibold text-gray-400 px-4 pt-3 pb-1">SPLIT AMONG</p>
+
+              {/* Select All option */}
+              <button
+                onClick={() => setSplitMembers([])}
+                className={`w-full text-left px-4 py-3 text-sm transition hover:bg-gray-50 flex items-center justify-between ${
+                  splitMembers.length === 0 ? "text-purple-600 font-semibold bg-purple-50" : "text-gray-700"
+                }`}>
+                <span> All Members</span>
+                {splitMembers.length === 0 && <span className="text-purple-500">✓</span>}
+              </button>
+
+              <div className="border-t border-gray-100">
+                {group?.members?.map((member) => (
+                  <button
+                    key={member.id}
+                    onClick={() => toggleSplitMember(member.email)}
+                    className={`w-full text-left px-4 py-3 text-sm transition hover:bg-gray-50 flex items-center justify-between ${
+                      splitMembers.includes(member.email)
+                        ? "text-purple-600 font-semibold bg-purple-50"
+                        : "text-gray-700"
+                    }`}>
+                    <span>
+                      {member.email === user?.email ? `${member.name} (You)` : member.name}
+                    </span>
+                    {splitMembers.includes(member.email) && (
+                      <span className="text-purple-500">✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {splitMembers.length > 0 && (
+                <div className="border-t border-gray-100 px-4 py-2">
+                  <p className="text-xs text-gray-400">
+                    Rs.{totalAmount
+                      ? (parseFloat(totalAmount) / splitMembers.length).toFixed(2)
+                      : "0"} per person
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Summary line */}
+      <p className="text-xs text-purple-500 mt-2 font-medium">
+        {splitMembers.length === 0
+          ? `Split equally among all ${group?.members?.length || 0} members`
+          : `Split among ${splitMembers.length} selected member${splitMembers.length !== 1 ? "s" : ""} — Rs.${
+              totalAmount
+                ? (parseFloat(totalAmount) / splitMembers.length).toFixed(2)
+                : "0"
+            } each`
+        }
+      </p>
     </div>
   );
 
@@ -206,9 +283,7 @@ export default function AddExpense() {
           <div className="bg-white rounded-2xl p-6 shadow-sm space-y-5">
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Title *
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
               <input type="text" value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Dinner at Pizza Hut"
@@ -217,9 +292,7 @@ export default function AddExpense() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Total Amount (₹) *
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount (₹) *</label>
               <input type="number" value={totalAmount}
                 onChange={(e) => setTotalAmount(e.target.value)}
                 placeholder="0.00"
@@ -228,24 +301,7 @@ export default function AddExpense() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Paid By
-              </label>
-              <select value={paidByEmail}
-                onChange={(e) => setPaidByEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400">
-                {group?.members?.map((member) => (
-                  <option key={member.id} value={member.email}>
-                    {member.name} {member.email === user?.email ? "(You)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
               <input type="text" value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Optional description"
@@ -253,51 +309,10 @@ export default function AddExpense() {
               />
             </div>
 
-            {/* Items */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm font-medium text-gray-700">
-                  Items (Optional)
-                </label>
-                <button onClick={addItem}
-                  className="flex items-center gap-1 text-purple-600 text-sm font-semibold hover:underline">
-                  <Plus size={14} /> Add Item
-                </button>
-              </div>
-              <div className="space-y-3">
-                {items.map((item, index) => (
-                  <div key={index} className="flex gap-2 items-center">
-                    <input type="text"
-                      value={item.itemName}
-                      onChange={(e) => updateItem(index, "itemName", e.target.value)}
-                      placeholder="Item name"
-                      className="flex-1 px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
-                    />
-                    <input type="number"
-                      value={item.price}
-                      onChange={(e) => updateItem(index, "price", e.target.value)}
-                      placeholder="Price"
-                      className="w-24 px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
-                    />
-                    <input type="number"
-                      value={item.quantity}
-                      onChange={(e) => updateItem(index, "quantity", e.target.value)}
-                      placeholder="Qty"
-                      className="w-16 px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
-                    />
-                    {items.length > 1 && (
-                      <button onClick={() => removeItem(index)}
-                        className="text-red-400 hover:text-red-600">
-                        <Trash2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+            
 
-            {/* Split Method */}
-            <SplitMethodSelector />
+            {/* Paid By + Split Row */}
+            <PaidBySplitRow />
 
             <button onClick={handleManualSubmit} disabled={loading}
               className="w-full py-3 rounded-xl text-white font-semibold text-lg transition"
@@ -319,9 +334,7 @@ export default function AddExpense() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Describe the expense
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Describe the expense</label>
               <textarea value={naturalText}
                 onChange={(e) => setNaturalText(e.target.value)}
                 placeholder="Type your expense naturally..."
@@ -331,9 +344,7 @@ export default function AddExpense() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Paid By
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paid By</label>
               <select value={paidByEmail}
                 onChange={(e) => setPaidByEmail(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400">
@@ -345,15 +356,10 @@ export default function AddExpense() {
               </select>
             </div>
 
-            {/* Split Method */}
-            <SplitMethodSelector />
-
             {/* AI Result Preview */}
             {aiResult && (
               <div className="border-2 border-purple-200 rounded-xl p-4 bg-purple-50">
-                <p className="font-semibold text-purple-700 mb-3">
-                  ✨ AI Extracted Result
-                </p>
+                <p className="font-semibold text-purple-700 mb-3">✨ AI Extracted Result</p>
                 <p className="font-bold text-gray-800">{aiResult.title}</p>
                 <p className="text-gray-600 text-sm">Total: ₹{aiResult.totalAmount}</p>
                 {aiResult.items?.length > 0 && (
@@ -389,9 +395,7 @@ export default function AddExpense() {
           <div className="bg-white rounded-2xl p-6 shadow-sm text-center">
             <div className="text-6xl mb-4">📸</div>
             <h3 className="text-xl font-semibold text-gray-700">Receipt Upload</h3>
-            <p className="text-gray-500 mt-2">
-              This feature requires an OpenAI API key.
-            </p>
+            <p className="text-gray-500 mt-2">This feature requires an OpenAI API key.</p>
             <p className="text-gray-400 text-sm mt-1">
               Add your API key in application.properties to enable this feature.
             </p>
