@@ -80,4 +80,13 @@ public class SplitController {
                 .getExpenseSplits(expenseId);
         return ResponseEntity.ok(response);
     }
+    @PostMapping("/custom/{expenseId}")
+    @Operation(summary = "Split expense among selected members")
+    public ResponseEntity<List<SplitDTOs.SplitResponse>> splitCustom(
+            @PathVariable String expenseId,
+            @RequestBody SplitDTOs.CustomSplitRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.splitCustom(expenseId, request, userDetails.getUsername()));
+    }
 }

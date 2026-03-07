@@ -93,16 +93,33 @@ public class ExpenseController {
                 .getGroupExpenses(groupId, userDetails.getUsername());
         return ResponseEntity.ok(expenses);
     }
-
-    // ─── 6. Delete Expense ────────────────────────────────────────────────
-
-    @DeleteMapping("/{expenseId}")
-    @Operation(summary = "Delete an expense")
-    public ResponseEntity<String> deleteExpense(
-            @PathVariable String expenseId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        expenseService.deleteExpense(expenseId, userDetails.getUsername());
-        return ResponseEntity.ok("Expense deleted successfully");
+     //6. edit expenses
+    @PutMapping("/{id}")
+    public ResponseEntity<ExpenseDTOs.ExpenseResponse> updateExpense(
+            @PathVariable String id,
+            @RequestBody ExpenseDTOs.ManualExpenseRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                expenseService.updateExpense(id, request, userDetails.getUsername()));
     }
+
+
+    // ─── 7. Delete Expense ────────────────────────────────────────────────
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete an expense")
+    public ResponseEntity<Void> deleteExpense(
+            @PathVariable String id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        expenseService.deleteExpense(id, userDetails.getUsername());
+        return ResponseEntity.noContent().build();
+    }
+    @GetMapping("/recent")
+    @Operation(summary = "Get recent expenses across all user groups")
+    public ResponseEntity<List<ExpenseDTOs.ExpenseResponse>> getRecentExpenses(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                expenseService.getRecentExpenses(userDetails.getUsername()));
+    }
+
 }

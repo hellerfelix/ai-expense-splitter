@@ -68,4 +68,22 @@ public class GroupController {
                 id, request, userDetails.getUsername());
         return ResponseEntity.ok(response);
     }
+    @PutMapping("/{id}")
+    @Operation(summary = "Update group name and description")
+    public ResponseEntity<GroupDTOs.GroupResponse> updateGroup(
+            @PathVariable String id,
+            @RequestBody GroupDTOs.CreateGroupRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                groupService.updateGroup(id, request, userDetails.getUsername()));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a group")
+    public ResponseEntity<Void> deleteGroup(
+            @PathVariable String id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        groupService.deleteGroup(id, userDetails.getUsername());
+        return ResponseEntity.noContent().build();
+    }
 }

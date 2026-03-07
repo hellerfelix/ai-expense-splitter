@@ -5,12 +5,14 @@ import helix.example.demo.auth.User;
 import helix.example.demo.auth.UserRepository;
 import helix.example.demo.group.Group;
 import helix.example.demo.group.GroupRepository;
+import helix.example.demo.split.Split;
 import helix.example.demo.split.SplitRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -33,7 +35,6 @@ public class ExpenseService {
 
         User loggedInUser = getUserByEmail(userEmail);
         Group group = getGroupById(request.getGroupId());
-
         validateUserInGroup(loggedInUser, group);
 
         User paidBy;
@@ -67,7 +68,6 @@ public class ExpenseService {
                                         ? itemReq.getQuantity() : 1)
                                 .expense(expense)
                                 .build();
-
                         if (itemReq.getAssignedToEmail() != null
                                 && !itemReq.getAssignedToEmail().isEmpty()) {
                             userRepository.findByEmail(itemReq.getAssignedToEmail())
@@ -76,7 +76,6 @@ public class ExpenseService {
                         return item;
                     })
                     .collect(Collectors.toList());
-
             expense.setItems(items);
         }
 
@@ -92,7 +91,6 @@ public class ExpenseService {
         User user = getUserByEmail(userEmail);
         Group group = getGroupById(request.getGroupId());
         validateUserInGroup(user, group);
-
         return aiService.extractFromNaturalLanguage(request.getText());
     }
 
@@ -104,17 +102,14 @@ public class ExpenseService {
         if (file.isEmpty()) {
             throw new RuntimeException("Please upload a valid image file");
         }
-
         String contentType = file.getContentType();
         if (contentType == null || !contentType.startsWith("image/")) {
             throw new RuntimeException(
                     "Invalid file type. Please upload an image (JPG, PNG)");
         }
-
         User user = getUserByEmail(userEmail);
         Group group = getGroupById(groupId);
         validateUserInGroup(user, group);
-
         return aiService.extractFromReceipt(file);
     }
 
@@ -132,8 +127,7 @@ public class ExpenseService {
         User paidBy;
         if (request.getPaidByEmail() != null && !request.getPaidByEmail().isEmpty()) {
             paidBy = userRepository.findByEmail(request.getPaidByEmail())
-                    .orElseThrow(() -> new RuntimeException(
-                            "User not found with email: " + request.getPaidByEmail()));
+                    .orElseThrow(() -> new RuntimeException("User not found"));
             validateUserInGroup(paidBy, group);
         } else {
             paidBy = loggedInUser;
@@ -159,7 +153,6 @@ public class ExpenseService {
                                         ? itemReq.getQuantity() : 1)
                                 .expense(expense)
                                 .build();
-
                         if (itemReq.getAssignedToEmail() != null
                                 && !itemReq.getAssignedToEmail().isEmpty()) {
                             userRepository.findByEmail(itemReq.getAssignedToEmail())
@@ -168,7 +161,6 @@ public class ExpenseService {
                         return item;
                     })
                     .collect(Collectors.toList());
-
             expense.setItems(items);
         }
 
@@ -199,11 +191,161 @@ public class ExpenseService {
         Expense expense = expenseRepository.findById(UUID.fromString(expenseId))
                 .orElseThrow(() -> new RuntimeException("Expense not found"));
 
-        if (!expense.getPaidBy().getEmail().equals(userEmail)) {
-            throw new RuntimeException("Only the person who paid can delete this expense");
+        // Any group member can delete the expense
+        validateUserInGroup(getUserByEmail(userEmail), expense.getGroup());
+
+        // Delete splits first to avoid foreign key constraint
+        List<Split> splits = splitRepository.findByExpense(expense);
+        if (!splits.isEmpty()) {
+            splitRepository.deleteAll(splits);
         }
 
         expenseRepository.delete(expense);
+    }
+
+    // ─── 7. Update Expense ────────────────────────────────────────────────
+
+    public ExpenseDTOs.ExpenseResponse updateExpense(
+            String expenseId,
+            ExpenseDTOs.ManualExpenseRequest request,
+            String userEmail) {
+
+        Expense expense = expenseRepository.findById(UUID.fromString(expenseId))
+                .orElseThrow(() -> new RuntimeException("Expense not found"));
+
+        boolean isPaidBy = expense.getPaidBy().getEmail().equals(userEmail);
+        boolean isCreatedBy = expense.getCreatedBy().getEmail().equals(userEmail);
+        if (!isPaidBy && !isCreatedBy) {
+            throw new RuntimeException(
+                    "Only the person who paid or created this expense can edit it");
+        }
+
+        if (request.getTitle() != null) expense.setTitle(request.getTitle());
+        if (request.getTotalAmount() != null) expense.setTotalAmount(request.getTotalAmount());
+        if (request.getDescription() != null) expense.setNotes(request.getDescription());
+
+        if (request.getPaidByEmail() != null && !request.getPaidByEmail().isEmpty()) {
+            User newPaidBy = userRepository.findByEmail(request.getPaidByEmail())
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+            validateUserInGroup(newPaidBy, expense.getGroup());
+            expense.setPaidBy(newPaidBy);
+        }
+
+        Expense saved = expenseRepository.save(expense);
+
+        // Handle splits based on settlement status
+        // Handle splits based on settlement status
+        List<Split> existingSplits = splitRepository.findByExpense(saved);
+
+        if (!existingSplits.isEmpty()) {
+
+            // Get only the SETTLED splits to find original base amount
+            List<Split> settledSplits = existingSplits.stream()
+                    .filter(Split::getSettled)
+                    .collect(Collectors.toList());
+
+            // If there are ANY settled splits, use settled amount as base
+            if (!settledSplits.isEmpty()) {
+
+                Group group = saved.getGroup();
+                List<User> members = group.getMembers();
+                User paidBy = saved.getPaidBy();
+
+                int memberCount = members.size();
+
+                // Original settled total = settled amount per person × memberCount
+                double settledAmountPerPerson = settledSplits.stream()
+                        .mapToDouble(Split::getAmount)
+                        .average()
+                        .orElse(0);
+                double originalSettledTotal = settledAmountPerPerson * memberCount;
+
+                // New share per person based on new total
+                double newSharePerPerson = saved.getTotalAmount() / memberCount;
+                double settledSharePerPerson = originalSettledTotal / memberCount;
+
+                double difference = Math.round(
+                        (newSharePerPerson - settledSharePerPerson) * 100.0) / 100.0;
+
+                log.info("Edit after settle - settledTotal: {}, newTotal: {}, " +
+                                "settledShare: {}, newShare: {}, difference: {}",
+                        originalSettledTotal, saved.getTotalAmount(),
+                        settledSharePerPerson, newSharePerPerson, difference);
+
+                // Delete any existing UNSETTLED splits (from previous edits)
+                List<Split> unsettledSplits = existingSplits.stream()
+                        .filter(s -> !s.getSettled())
+                        .collect(Collectors.toList());
+                if (!unsettledSplits.isEmpty()) {
+                    splitRepository.deleteAll(unsettledSplits);
+                }
+
+                if (difference > 0.01) {
+                    // Amount increased vs original — others owe paidBy the difference
+                    List<Split> newSplits = new ArrayList<>();
+                    for (User member : members) {
+                        if (member.getId().equals(paidBy.getId())) continue;
+                        Split split = Split.builder()
+                                .owesBy(member)
+                                .owesTo(paidBy)
+                                .amount(difference)
+                                .expense(saved)
+                                .group(group)
+                                .settled(false)
+                                .build();
+                        newSplits.add(split);
+                    }
+                    splitRepository.saveAll(newSplits);
+
+                } else if (difference < -0.01) {
+                    // Amount decreased vs original — paidBy owes others back
+                    double refundPerPerson = Math.round(
+                            Math.abs(difference) * 100.0) / 100.0;
+                    List<Split> refundSplits = new ArrayList<>();
+                    for (User member : members) {
+                        if (member.getId().equals(paidBy.getId())) continue;
+                        Split split = Split.builder()
+                                .owesBy(paidBy)
+                                .owesTo(member)
+                                .amount(refundPerPerson)
+                                .expense(saved)
+                                .group(group)
+                                .settled(false)
+                                .build();
+                        refundSplits.add(split);
+                    }
+                    splitRepository.saveAll(refundSplits);
+                }
+                // difference == 0 → amount same as original settled, nothing to do
+
+            } else {
+                // No settled splits — delete all and re-split full amount fresh
+                splitRepository.deleteAll(existingSplits);
+
+                Group group = saved.getGroup();
+                List<User> members = group.getMembers();
+                User paidBy = saved.getPaidBy();
+                double sharePerPerson = Math.round(
+                        (saved.getTotalAmount() / members.size()) * 100.0) / 100.0;
+
+                List<Split> newSplits = new ArrayList<>();
+                for (User member : members) {
+                    if (member.getId().equals(paidBy.getId())) continue;
+                    Split split = Split.builder()
+                            .owesBy(member)
+                            .owesTo(paidBy)
+                            .amount(sharePerPerson)
+                            .expense(saved)
+                            .group(group)
+                            .settled(false)
+                            .build();
+                    newSplits.add(split);
+                }
+                splitRepository.saveAll(newSplits);
+            }
+        }
+
+        return mapToExpenseResponse(saved);
     }
 
     // ─── HELPER METHODS ───────────────────────────────────────────────────
@@ -255,5 +397,17 @@ public class ExpenseService {
                 .createdAt(expense.getCreatedAt())
                 .splitCount(splitRepository.countByExpense(expense))
                 .build();
+    }
+    public List<ExpenseDTOs.ExpenseResponse> getRecentExpenses(String userEmail) {
+        User user = getUserByEmail(userEmail);
+        List<Group> groups = groupRepository.findGroupsByMember(user);
+
+        return groups.stream()
+                .flatMap(group -> expenseRepository
+                        .findByGroupIdOrderByCreatedAtDesc(group.getId()).stream())
+                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .limit(8)
+                .map(this::mapToExpenseResponse)
+                .collect(Collectors.toList());
     }
 }

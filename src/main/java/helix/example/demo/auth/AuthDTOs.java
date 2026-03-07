@@ -62,4 +62,10 @@ public class AuthDTOs {
         private String email;
         private String upiId;
     }
+
+    @Data
+    public static class ChangePasswordRequest {
+        private String currentPassword;
+        private String newPassword;
+    }
 }

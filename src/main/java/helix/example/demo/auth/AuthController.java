@@ -49,5 +49,13 @@ public class AuthController {
         AuthDTOs.UserResponse response = authService.getCurrentUser(userDetails.getUsername());
         return ResponseEntity.ok(response);
     }
+
+    @PutMapping("/change-password")
+    public ResponseEntity<String> changePassword(
+            @RequestBody AuthDTOs.ChangePasswordRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        authService.changePassword(request, userDetails.getUsername());
+        return ResponseEntity.ok("Password changed successfully");
+    }
 }
 

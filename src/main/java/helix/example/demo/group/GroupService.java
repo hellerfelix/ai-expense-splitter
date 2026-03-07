@@ -38,7 +38,7 @@ public class GroupService {
     // Get all groups for current user
     public List<GroupDTOs.GroupResponse> getMyGroups(String userEmail) {
         User user = getUserByEmail(userEmail);
-        List<Group> groups = groupRepository.findAllGroupsByUser(user);
+        List<Group> groups = groupRepository.findGroupsByMember(user);
         return groups.stream()
                 .map(this::mapToGroupResponse)
                 .collect(Collectors.toList());
@@ -117,5 +117,37 @@ public class GroupService {
                 .totalMembers(members.size())
                 .createdAt(group.getCreatedAt())
                 .build();
+    }
+    public GroupDTOs.GroupResponse updateGroup(
+            String groupId,
+            GroupDTOs.CreateGroupRequest request,
+            String userEmail) {
+
+        Group group = groupRepository.findById(UUID.fromString(groupId))
+                .orElseThrow(() -> new RuntimeException("Group not found"));
+
+        if (!group.getCreatedBy().getEmail().equals(userEmail)) {
+            throw new RuntimeException("Only the group creator can edit this group");
+        }
+
+        if (request.getName() != null && !request.getName().trim().isEmpty()) {
+            group.setName(request.getName());
+        }
+        if (request.getDescription() != null) {
+            group.setDescription(request.getDescription());
+        }
+
+        return mapToGroupResponse(groupRepository.save(group));
+    }
+
+    public void deleteGroup(String groupId, String userEmail) {
+        Group group = groupRepository.findById(UUID.fromString(groupId))
+                .orElseThrow(() -> new RuntimeException("Group not found"));
+
+        if (!group.getCreatedBy().getEmail().equals(userEmail)) {
+            throw new RuntimeException("Only the group creator can delete this group");
+        }
+
+        groupRepository.delete(group);
     }
 }
