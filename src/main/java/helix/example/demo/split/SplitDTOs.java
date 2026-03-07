@@ -61,4 +61,8 @@ public class SplitDTOs {
         private List<BalanceResponse> balances; // all balances in group
         private Double totalUnsettled;          // total money unsettled in group
     }
+    @Data
+    public static class CustomSplitRequest {
+        private List<String> memberEmails; // emails to split among
+    }
 }
