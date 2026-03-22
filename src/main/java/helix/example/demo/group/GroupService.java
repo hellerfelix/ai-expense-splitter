@@ -2,9 +2,13 @@ package helix.example.demo.group;
 
 import helix.example.demo.auth.User;
 import helix.example.demo.auth.UserRepository;
+import helix.example.demo.expense.ExpenseRepository;
+import helix.example.demo.split.SplitRepository;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -15,6 +19,8 @@ public class GroupService {
 
     private final GroupRepository groupRepository;
     private final UserRepository userRepository;
+    private final ExpenseRepository expenseRepository;
+    private final SplitRepository splitRepository;
 
     // Create a new group
     public GroupDTOs.GroupResponse createGroup(
@@ -49,10 +55,10 @@ public class GroupService {
         Group group = groupRepository.findById(UUID.fromString(groupId))
                 .orElseThrow(() -> new RuntimeException("Group not found"));
 
-        // Check if user is a member
         User user = getUserByEmail(userEmail);
-        boolean isMember = group.getMembers().contains(user);
-        boolean isCreator = group.getCreatedBy().equals(user);
+        boolean isMember = group.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(user.getId()));
+        boolean isCreator = group.getCreatedBy().getId().equals(user.getId());
 
         if (!isMember && !isCreator) {
             throw new RuntimeException("You are not a member of this group");
@@ -69,7 +75,6 @@ public class GroupService {
                 .orElseThrow(() -> new RuntimeException("Group not found"));
 
         // Only creator can add members
-        User requester = getUserByEmail(requesterEmail);
         if (!group.getCreatedBy().getEmail().equals(requesterEmail)) {
             throw new RuntimeException("Only group creator can add members");
         }
@@ -80,8 +85,10 @@ public class GroupService {
                         "No user found with email: " + request.getEmail() +
                                 ". Ask them to register first."));
 
-        // Check if already a member
-        if (group.getMembers().contains(newMember)) {
+        // FIX: use stream with getId() instead of .contains() for reliable check
+        boolean alreadyMember = group.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(newMember.getId()));
+        if (alreadyMember) {
             throw new RuntimeException("User is already a member of this group");
         }
 
@@ -91,33 +98,7 @@ public class GroupService {
         return mapToGroupResponse(saved);
     }
 
-    // ---------- HELPER METHODS ----------
-
-    private User getUserByEmail(String email) {
-        return userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-    }
-
-    private GroupDTOs.GroupResponse mapToGroupResponse(Group group) {
-        List<GroupDTOs.MemberResponse> members = group.getMembers().stream()
-                .map(m -> GroupDTOs.MemberResponse.builder()
-                        .id(m.getId().toString())
-                        .name(m.getName())
-                        .email(m.getEmail())
-                        .upiId(m.getUpiId())
-                        .build())
-                .collect(Collectors.toList());
-
-        return GroupDTOs.GroupResponse.builder()
-                .id(group.getId().toString())
-                .name(group.getName())
-                .description(group.getDescription())
-                .createdBy(group.getCreatedBy().getName())
-                .members(members)
-                .totalMembers(members.size())
-                .createdAt(group.getCreatedAt())
-                .build();
-    }
+    // Update group details
     public GroupDTOs.GroupResponse updateGroup(
             String groupId,
             GroupDTOs.CreateGroupRequest request,
@@ -140,6 +121,8 @@ public class GroupService {
         return mapToGroupResponse(groupRepository.save(group));
     }
 
+    // Delete group — must remove splits and expenses first due to FK constraints
+    @Transactional
     public void deleteGroup(String groupId, String userEmail) {
         Group group = groupRepository.findById(UUID.fromString(groupId))
                 .orElseThrow(() -> new RuntimeException("Group not found"));
@@ -148,6 +131,100 @@ public class GroupService {
             throw new RuntimeException("Only the group creator can delete this group");
         }
 
+        UUID gid = UUID.fromString(groupId);
+
+        // 1. Delete all splits (has direct FK to both group_id AND expense_id)
+        splitRepository.deleteByGroupId(gid);
+
+        // 2. Delete all expenses
+        expenseRepository.deleteByGroupId(gid);
+
+        // 3. Delete the group (JPA auto-clears group_members join table)
         groupRepository.delete(group);
+    }
+
+    // Generate invite link for a group
+    public GroupDTOs.InviteLinkResponse generateInviteLink(String groupId, String userEmail) {
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        Group group = groupRepository.findById(UUID.fromString(groupId))
+                .orElseThrow(() -> new RuntimeException("Group not found"));
+        validateUserInGroup(user, group);
+
+        String token = UUID.randomUUID().toString().replace("-", "");
+        group.setInviteToken(token);
+        group.setInviteExpiry(LocalDateTime.now().plusHours(24));
+        groupRepository.save(group);
+
+        GroupDTOs.InviteLinkResponse response = new GroupDTOs.InviteLinkResponse();
+        response.setInviteLink("http://localhost:3000/join/" + token);
+        response.setExpiresAt(group.getInviteExpiry());
+        return response;
+    }
+
+    // Join group via invite link — FIX 3: token invalidated after use
+    public void joinByInviteLink(String token, String userEmail) {
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Group group = groupRepository.findByInviteToken(token)
+                .orElseThrow(() -> new RuntimeException("Invalid invite link"));
+
+        if (group.getInviteExpiry() == null ||
+                group.getInviteExpiry().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("Invite link has expired");
+        }
+
+        // FIX: use stream with getId() instead of .contains() for reliable check
+        boolean alreadyMember = group.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(user.getId()));
+        if (alreadyMember) {
+            throw new RuntimeException("You are already a member of this group");
+        }
+
+        group.getMembers().add(user);
+
+        // FIX 3: invalidate token after single use
+        group.setInviteToken(null);
+        group.setInviteExpiry(null);
+
+        groupRepository.save(group);
+    }
+
+    // ---------- HELPER METHODS ----------
+
+    private User getUserByEmail(String email) {
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+
+    private void validateUserInGroup(User user, Group group) {
+        boolean isMember = group.getMembers().stream()
+                .anyMatch(m -> m.getId().equals(user.getId()));
+        boolean isCreator = group.getCreatedBy().getId().equals(user.getId());
+        if (!isMember && !isCreator) {
+            throw new RuntimeException("You are not a member of this group");
+        }
+    }
+
+    private GroupDTOs.GroupResponse mapToGroupResponse(Group group) {
+        List<GroupDTOs.MemberResponse> members = group.getMembers().stream()
+                .map(m -> GroupDTOs.MemberResponse.builder()
+                        .id(m.getId().toString())
+                        .name(m.getName())
+                        .email(m.getEmail())
+                        .upiId(m.getUpiId())
+                        .build())
+                .collect(Collectors.toList());
+
+        return GroupDTOs.GroupResponse.builder()
+                .id(group.getId().toString())
+                .name(group.getName())
+                .description(group.getDescription())
+                .createdBy(group.getCreatedBy().getName())
+                .members(members)
+                .totalMembers(members.size())
+                .createdAt(group.getCreatedAt())
+                .build();
     }
 }

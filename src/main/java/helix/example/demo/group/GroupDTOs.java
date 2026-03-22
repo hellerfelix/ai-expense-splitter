@@ -49,4 +49,9 @@ public class GroupDTOs {
         private int totalMembers;
         private LocalDateTime createdAt;
     }
+    @Data
+    public static class InviteLinkResponse {
+        private String inviteLink;
+        private LocalDateTime expiresAt;
+    }
 }

@@ -26,11 +26,9 @@ public class SplitController {
     @Operation(summary = "Split expense equally among all group members")
     public ResponseEntity<List<SplitDTOs.SplitResponse>> splitEqually(
             @PathVariable String expenseId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        List<SplitDTOs.SplitResponse> response = splitService
-                .splitEqually(expenseId, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.splitEqually(expenseId, userDetails.getUsername()));
     }
 
     // POST /api/splits/itemwise/{expenseId}
@@ -38,11 +36,9 @@ public class SplitController {
     @Operation(summary = "Split expense by item assignment")
     public ResponseEntity<List<SplitDTOs.SplitResponse>> splitByItems(
             @PathVariable String expenseId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        List<SplitDTOs.SplitResponse> response = splitService
-                .splitByItems(expenseId, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.splitByItems(expenseId, userDetails.getUsername()));
     }
 
     // GET /api/splits/balances/{groupId}
@@ -50,11 +46,9 @@ public class SplitController {
     @Operation(summary = "Get who owes whom in a group")
     public ResponseEntity<SplitDTOs.GroupBalanceSummary> getGroupBalances(
             @PathVariable String groupId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        SplitDTOs.GroupBalanceSummary response = splitService
-                .getGroupBalances(groupId, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.getGroupBalances(groupId, userDetails.getUsername()));
     }
 
     // POST /api/splits/settle
@@ -62,11 +56,9 @@ public class SplitController {
     @Operation(summary = "Mark a split as settled")
     public ResponseEntity<SplitDTOs.SplitResponse> settleSplit(
             @Valid @RequestBody SplitDTOs.SettleRequest request,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        SplitDTOs.SplitResponse response = splitService
-                .settleSplit(request, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.settleSplit(request, userDetails.getUsername()));
     }
 
     // GET /api/splits/expense/{expenseId}
@@ -74,12 +66,12 @@ public class SplitController {
     @Operation(summary = "Get all splits for an expense")
     public ResponseEntity<List<SplitDTOs.SplitResponse>> getExpenseSplits(
             @PathVariable String expenseId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        List<SplitDTOs.SplitResponse> response = splitService
-                .getExpenseSplits(expenseId);
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.getExpenseSplits(expenseId));
     }
+
+    // POST /api/splits/custom/{expenseId}
     @PostMapping("/custom/{expenseId}")
     @Operation(summary = "Split expense among selected members")
     public ResponseEntity<List<SplitDTOs.SplitResponse>> splitCustom(
@@ -88,5 +80,15 @@ public class SplitController {
             @AuthenticationPrincipal UserDetails userDetails) {
         return ResponseEntity.ok(
                 splitService.splitCustom(expenseId, request, userDetails.getUsername()));
+    }
+
+    // GET /api/splits/settled/{groupId}  — FIX 1: replaces localStorage settled history
+    @GetMapping("/settled/{groupId}")
+    @Operation(summary = "Get all settled splits for a group")
+    public ResponseEntity<List<SplitDTOs.SplitResponse>> getSettledSplits(
+            @PathVariable String groupId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                splitService.getSettledSplits(groupId));
     }
 }

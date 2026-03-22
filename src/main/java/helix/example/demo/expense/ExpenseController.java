@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/expenses")
@@ -29,11 +30,9 @@ public class ExpenseController {
     @Operation(summary = "Add expense manually")
     public ResponseEntity<ExpenseDTOs.ExpenseResponse> createManualExpense(
             @Valid @RequestBody ExpenseDTOs.ManualExpenseRequest request,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        ExpenseDTOs.ExpenseResponse response = expenseService
-                .createManualExpense(request, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                expenseService.createManualExpense(request, userDetails.getUsername()));
     }
 
     // ─── 2. Natural Language ──────────────────────────────────────────────
@@ -42,11 +41,9 @@ public class ExpenseController {
     @Operation(summary = "Extract expense from natural language text")
     public ResponseEntity<ExpenseDTOs.AiExtractedExpense> extractFromNaturalLanguage(
             @Valid @RequestBody ExpenseDTOs.NaturalLanguageRequest request,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        ExpenseDTOs.AiExtractedExpense response = expenseService
-                .extractFromNaturalLanguage(request, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                expenseService.extractFromNaturalLanguage(request, userDetails.getUsername()));
     }
 
     // ─── 3. Receipt Upload ────────────────────────────────────────────────
@@ -56,45 +53,45 @@ public class ExpenseController {
     public ResponseEntity<ExpenseDTOs.AiExtractedExpense> uploadReceipt(
             @RequestParam("file") MultipartFile file,
             @RequestParam("groupId") String groupId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        ExpenseDTOs.AiExtractedExpense response = expenseService
-                .extractFromReceipt(file, groupId, userDetails.getUsername());
-        return ResponseEntity.ok(response);
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                expenseService.extractFromReceipt(file, groupId, userDetails.getUsername()));
     }
 
-    // ─── 4. Save AI Extracted Expense (after user reviews) ───────────────
+    // ─── 4. Save AI Extracted Expense ────────────────────────────────────
 
     @PostMapping("/save-ai")
     @Operation(summary = "Save AI extracted expense after user reviews it")
     public ResponseEntity<ExpenseDTOs.ExpenseResponse> saveAiExpense(
             @Valid @RequestBody ExpenseDTOs.ManualExpenseRequest request,
             @RequestParam String type,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
+            @AuthenticationPrincipal UserDetails userDetails) {
         Expense.ExpenseType expenseType = type.equals("RECEIPT_UPLOAD")
                 ? Expense.ExpenseType.RECEIPT_UPLOAD
                 : Expense.ExpenseType.NATURAL_LANGUAGE;
-
-        ExpenseDTOs.ExpenseResponse response = expenseService
-                .saveAiExtractedExpense(request, userDetails.getUsername(), expenseType);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(
+                expenseService.saveAiExtractedExpense(
+                        request, userDetails.getUsername(), expenseType));
     }
 
-    // ─── 5. Get Group Expenses ────────────────────────────────────────────
+    // ─── 5. Get Group Expenses (PAGINATED) ───────────────────────────────
 
     @GetMapping("/group/{groupId}")
-    @Operation(summary = "Get all expenses for a group")
-    public ResponseEntity<List<ExpenseDTOs.ExpenseResponse>> getGroupExpenses(
+    @Operation(summary = "Get paginated expenses for a group")
+    public ResponseEntity<Map<String, Object>> getGroupExpenses(
             @PathVariable String groupId,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        List<ExpenseDTOs.ExpenseResponse> expenses = expenseService
-                .getGroupExpenses(groupId, userDetails.getUsername());
-        return ResponseEntity.ok(expenses);
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                expenseService.getGroupExpenses(
+                        groupId, userDetails.getUsername(), page, size));
     }
-     //6. edit expenses
+
+    // ─── 6. Update Expense ────────────────────────────────────────────────
+
     @PutMapping("/{id}")
+    @Operation(summary = "Edit an expense")
     public ResponseEntity<ExpenseDTOs.ExpenseResponse> updateExpense(
             @PathVariable String id,
             @RequestBody ExpenseDTOs.ManualExpenseRequest request,
@@ -102,7 +99,6 @@ public class ExpenseController {
         return ResponseEntity.ok(
                 expenseService.updateExpense(id, request, userDetails.getUsername()));
     }
-
 
     // ─── 7. Delete Expense ────────────────────────────────────────────────
 
@@ -114,6 +110,9 @@ public class ExpenseController {
         expenseService.deleteExpense(id, userDetails.getUsername());
         return ResponseEntity.noContent().build();
     }
+
+    // ─── 8. Recent Expenses ───────────────────────────────────────────────
+
     @GetMapping("/recent")
     @Operation(summary = "Get recent expenses across all user groups")
     public ResponseEntity<List<ExpenseDTOs.ExpenseResponse>> getRecentExpenses(
@@ -121,5 +120,4 @@ public class ExpenseController {
         return ResponseEntity.ok(
                 expenseService.getRecentExpenses(userDetails.getUsername()));
     }
-
 }

@@ -45,9 +45,10 @@ export const groupAPI = {
   getAll: () => api.get('/groups'),
   getById: (id) => api.get(`/groups/${id}`),
   addMember: (id, data) => api.post(`/groups/${id}/members`, data),
-  // inside groupAPI:
-update: (id, data) => api.put(`/groups/${id}`, data),
-delete: (id) => api.delete(`/groups/${id}`),
+  update: (id, data) => api.put(`/groups/${id}`, data),
+  delete: (id) => api.delete(`/groups/${id}`),
+  generateInviteLink: (id) => api.post(`/groups/${id}/invite`),
+  joinByInviteLink: (token) => api.post(`/groups/join/${token}`),
 };
 
 // ─── Expense APIs ─────────────────────────────────────────
@@ -58,11 +59,15 @@ export const expenseAPI = {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   saveAiExpense: (data, type) => api.post(`/expenses/save-ai?type=${type}`, data),
-  getGroupExpenses: (groupId) => api.get(`/expenses/group/${groupId}`),
+  // UPDATED: now supports pagination — page starts at 0, default size 10
+  getGroupExpenses: (groupId, page = 0, size = 10) =>
+    api.get(`/expenses/group/${groupId}?page=${page}&size=${size}`),
+  // fetch all expenses for PDF export
+  getAllGroupExpenses: (groupId) =>
+    api.get(`/expenses/group/${groupId}?page=0&size=1000`),
   updateExpense: (id, data) => api.put(`/expenses/${id}`, data),
   deleteExpense: (id) => api.delete(`/expenses/${id}`),
-  // inside expenseAPI:
-getRecent: () => api.get('/expenses/recent'),
+  getRecent: () => api.get('/expenses/recent'),
 };
 
 // ─── Split APIs ───────────────────────────────────────────
@@ -72,13 +77,12 @@ export const splitAPI = {
   getBalances: (groupId) => api.get(`/splits/balances/${groupId}`),
   settle: (data) => api.post('/splits/settle', data),
   getExpenseSplits: (expenseId) => api.get(`/splits/expense/${expenseId}`),
-  // inside splitAPI:
-splitCustom: (expenseId, data) => api.post(`/splits/custom/${expenseId}`, data),
+  splitCustom: (expenseId, data) => api.post(`/splits/custom/${expenseId}`, data),
+  getSettledSplits: (groupId) => api.get(`/splits/settled/${groupId}`),
 };
 
 export const profileAPI = {
-    changePassword: (data) => api.put('/auth/change-password', data),
-  };
+  changePassword: (data) => api.put('/auth/change-password', data),
+};
 
-  
 export default api;

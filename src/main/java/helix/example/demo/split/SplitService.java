@@ -35,10 +35,9 @@ public class SplitService {
         Expense expense = getExpenseById(expenseId);
         validateExpenseOwner(expense, userEmail);
 
-        // Check if already split
-        if (splitRepository.existsByExpense(expense)) {
-            throw new RuntimeException(
-                    "This expense has already been split.");
+        // FIX 2: check isSplit flag instead of DB rows
+        if (Boolean.TRUE.equals(expense.getIsSplit())) {
+            throw new RuntimeException("This expense has already been split.");
         }
 
         Group group = expense.getGroup();
@@ -67,6 +66,11 @@ public class SplitService {
         }
 
         List<Split> saved = splitRepository.saveAll(splits);
+
+        // FIX 2: mark expense as split so it can't be split again
+        expense.setIsSplit(true);
+        expenseRepository.save(expense);
+
         return saved.stream()
                 .map(this::mapToSplitResponse)
                 .collect(Collectors.toList());
@@ -81,9 +85,9 @@ public class SplitService {
         Expense expense = getExpenseById(expenseId);
         validateExpenseOwner(expense, userEmail);
 
-        if (splitRepository.existsByExpense(expense)) {
-            throw new RuntimeException(
-                    "This expense has already been split.");
+        // FIX 2: check isSplit flag instead of DB rows
+        if (Boolean.TRUE.equals(expense.getIsSplit())) {
+            throw new RuntimeException("This expense has already been split.");
         }
 
         List<ExpenseItem> items = expense.getItems();
@@ -121,6 +125,11 @@ public class SplitService {
         }
 
         List<Split> saved = splitRepository.saveAll(splits);
+
+        // FIX 2: mark expense as split so it can't be split again
+        expense.setIsSplit(true);
+        expenseRepository.save(expense);
+
         return saved.stream()
                 .map(this::mapToSplitResponse)
                 .collect(Collectors.toList());
@@ -245,6 +254,69 @@ public class SplitService {
                 .collect(Collectors.toList());
     }
 
+    // ─── 6. Get Settled Splits for a Group (FIX 1 — replaces localStorage) ──
+
+    public List<SplitDTOs.SplitResponse> getSettledSplits(String groupId) {
+        Group group = getGroupById(groupId);
+        return splitRepository.findByGroupAndSettled(group, true)
+                .stream()
+                .map(this::mapToSplitResponse)
+                .collect(Collectors.toList());
+    }
+
+    // ─── 7. Custom Split ─────────────────────────────────────────────────
+
+    public List<SplitDTOs.SplitResponse> splitCustom(
+            String expenseId,
+            SplitDTOs.CustomSplitRequest request,
+            String userEmail) {
+
+        Expense expense = expenseRepository.findById(UUID.fromString(expenseId))
+                .orElseThrow(() -> new RuntimeException("Expense not found"));
+
+        validateExpenseOwner(expense, userEmail);
+
+        // FIX 2: check isSplit flag instead of DB rows
+        if (Boolean.TRUE.equals(expense.getIsSplit())) {
+            throw new RuntimeException("Expense already split");
+        }
+
+        Group group = expense.getGroup();
+        User paidBy = expense.getPaidBy();
+
+        List<User> splitAmong = request.getMemberEmails().stream()
+                .map(email -> userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found: " + email)))
+                .collect(Collectors.toList());
+
+        double sharePerPerson = Math.round(
+                (expense.getTotalAmount() / splitAmong.size()) * 100.0) / 100.0;
+
+        List<Split> splits = new ArrayList<>();
+        for (User member : splitAmong) {
+            if (member.getId().equals(paidBy.getId())) continue;
+            Split split = Split.builder()
+                    .owesBy(member)
+                    .owesTo(paidBy)
+                    .amount(sharePerPerson)
+                    .expense(expense)
+                    .group(group)
+                    .settled(false)
+                    .build();
+            splits.add(split);
+        }
+
+        List<Split> saved = splitRepository.saveAll(splits);
+
+        // FIX 2: mark expense as split so it can't be split again
+        expense.setIsSplit(true);
+        expenseRepository.save(expense);
+
+        return saved.stream()
+                .map(this::mapToSplitResponse)
+                .collect(Collectors.toList());
+    }
+
     // ─── HELPER METHODS ───────────────────────────────────────────────────
 
     private Expense getExpenseById(String expenseId) {
@@ -280,49 +352,5 @@ public class SplitService {
                 .createdAt(split.getCreatedAt())
                 .settledAt(split.getSettledAt())
                 .build();
-    }
-
-    public List<SplitDTOs.SplitResponse> splitCustom(
-            String expenseId,
-            SplitDTOs.CustomSplitRequest request,
-            String userEmail) {
-
-        Expense expense = expenseRepository.findById(UUID.fromString(expenseId))
-                .orElseThrow(() -> new RuntimeException("Expense not found"));
-
-        validateExpenseOwner(expense, userEmail);
-
-        if (splitRepository.existsByExpense(expense)) {
-            throw new RuntimeException("Expense already split");
-        }
-
-        Group group = expense.getGroup();
-        User paidBy = expense.getPaidBy();
-
-        List<User> splitAmong = request.getMemberEmails().stream()
-                .map(email -> userRepository.findByEmail(email)
-                        .orElseThrow(() -> new RuntimeException("User not found: " + email)))
-                .collect(Collectors.toList());
-
-        double sharePerPerson = Math.round(
-                (expense.getTotalAmount() / splitAmong.size()) * 100.0) / 100.0;
-
-        List<Split> splits = new ArrayList<>();
-        for (User member : splitAmong) {
-            if (member.getId().equals(paidBy.getId())) continue;
-            Split split = Split.builder()
-                    .owesBy(member)
-                    .owesTo(paidBy)
-                    .amount(sharePerPerson)
-                    .expense(expense)
-                    .group(group)
-                    .settled(false)
-                    .build();
-            splits.add(split);
-        }
-
-        return splitRepository.saveAll(splits).stream()
-                .map(this::mapToSplitResponse)
-                .collect(Collectors.toList());
     }
 }

@@ -2,7 +2,9 @@ package helix.example.demo.split;
 
 import helix.example.demo.expense.Expense;
 import helix.example.demo.group.Group;
+import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -15,4 +17,11 @@ public interface SplitRepository extends JpaRepository<Split, UUID> {
     int countByExpense(Expense expense);
     boolean existsByExpense(Expense expense);
     List<Split> findByExpense(Expense expense);
+
+
+
+    @Modifying
+    @Transactional
+    void deleteByGroupId(UUID groupId);
+
 }

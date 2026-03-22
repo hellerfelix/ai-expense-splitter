@@ -49,4 +49,9 @@ public class Group {
     public void prePersist() {
         this.createdAt = LocalDateTime.now();
     }
+
+    @Column(unique = true)
+    private String inviteToken;
+
+    private LocalDateTime inviteExpiry;
 }

@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -14,6 +15,8 @@ public interface GroupRepository extends JpaRepository<Group, UUID> {
 
     @Query("SELECT g FROM Group g WHERE :user MEMBER OF g.members OR g.createdBy = :user")
     List<Group> findGroupsByMember(@Param("user") User user);
+
+    Optional<Group> findByInviteToken(String inviteToken);
 
 
 }

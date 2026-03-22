@@ -86,4 +86,22 @@ public class GroupController {
         groupService.deleteGroup(id, userDetails.getUsername());
         return ResponseEntity.noContent().build();
     }
+
+    @PostMapping("/{id}/invite")
+    @Operation(summary = "Generate invite link for a group")
+    public ResponseEntity<GroupDTOs.InviteLinkResponse> generateInviteLink(
+            @PathVariable String id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(
+                groupService.generateInviteLink(id, userDetails.getUsername()));
+    }
+
+    @PostMapping("/join/{token}")
+    @Operation(summary = "Join group via invite link")
+    public ResponseEntity<String> joinByInviteLink(
+            @PathVariable String token,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        groupService.joinByInviteLink(token, userDetails.getUsername());
+        return ResponseEntity.ok("Successfully joined the group!");
+    }
 }

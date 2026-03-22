@@ -57,6 +57,11 @@ public class Expense {
 
     private String notes;
 
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean isSplit = false;
+
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -71,4 +76,5 @@ public class Expense {
         NATURAL_LANGUAGE,
         RECEIPT_UPLOAD
     }
+
 }

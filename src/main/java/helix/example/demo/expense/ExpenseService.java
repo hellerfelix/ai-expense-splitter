@@ -3,17 +3,23 @@ package helix.example.demo.expense;
 import helix.example.demo.ai.AiService;
 import helix.example.demo.auth.User;
 import helix.example.demo.auth.UserRepository;
+import helix.example.demo.email.EmailService;
 import helix.example.demo.group.Group;
 import helix.example.demo.group.GroupRepository;
 import helix.example.demo.split.Split;
 import helix.example.demo.split.SplitRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -27,6 +33,7 @@ public class ExpenseService {
     private final GroupRepository groupRepository;
     private final AiService aiService;
     private final SplitRepository splitRepository;
+    private final EmailService emailService;
 
     // ─── 1. Manual Expense Entry ──────────────────────────────────────────
 
@@ -80,6 +87,21 @@ public class ExpenseService {
         }
 
         Expense saved = expenseRepository.save(expense);
+
+        // Send email notifications to all group members except the payer
+        List<String> memberEmails = group.getMembers().stream()
+                .map(User::getEmail)
+                .filter(e -> !e.equals(paidBy.getEmail()))
+                .collect(Collectors.toList());
+
+        emailService.sendExpenseNotification(
+                memberEmails,
+                group.getName(),
+                saved.getTitle(),
+                saved.getTotalAmount(),
+                paidBy.getName()
+        );
+
         return mapToExpenseResponse(saved);
     }
 
@@ -165,24 +187,48 @@ public class ExpenseService {
         }
 
         Expense saved = expenseRepository.save(expense);
+
+        List<String> memberEmails = group.getMembers().stream()
+                .map(User::getEmail)
+                .filter(e -> !e.equals(paidBy.getEmail()))
+                .collect(Collectors.toList());
+
+        emailService.sendExpenseNotification(
+                memberEmails,
+                group.getName(),
+                saved.getTitle(),
+                saved.getTotalAmount(),
+                paidBy.getName()
+        );
+
         return mapToExpenseResponse(saved);
     }
 
-    // ─── 5. Get Group Expenses ────────────────────────────────────────────
+    // ─── 5. Get Group Expenses (PAGINATED) ───────────────────────────────
 
-    public List<ExpenseDTOs.ExpenseResponse> getGroupExpenses(
-            String groupId, String userEmail) {
+    public Map<String, Object> getGroupExpenses(
+            String groupId, String userEmail, int page, int size) {
 
         User user = getUserByEmail(userEmail);
         Group group = getGroupById(groupId);
         validateUserInGroup(user, group);
 
-        List<Expense> expenses = expenseRepository
-                .findByGroupIdOrderByCreatedAtDesc(UUID.fromString(groupId));
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Expense> expensePage = expenseRepository
+                .findByGroupIdOrderByCreatedAtDesc(UUID.fromString(groupId), pageable);
 
-        return expenses.stream()
+        List<ExpenseDTOs.ExpenseResponse> expenses = expensePage.getContent()
+                .stream()
                 .map(this::mapToExpenseResponse)
                 .collect(Collectors.toList());
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("expenses", expenses);
+        response.put("currentPage", expensePage.getNumber());
+        response.put("totalPages", expensePage.getTotalPages());
+        response.put("totalExpenses", expensePage.getTotalElements());
+        response.put("hasMore", !expensePage.isLast());
+        return response;
     }
 
     // ─── 6. Delete Expense ────────────────────────────────────────────────
@@ -191,10 +237,8 @@ public class ExpenseService {
         Expense expense = expenseRepository.findById(UUID.fromString(expenseId))
                 .orElseThrow(() -> new RuntimeException("Expense not found"));
 
-        // Any group member can delete the expense
         validateUserInGroup(getUserByEmail(userEmail), expense.getGroup());
 
-        // Delete splits first to avoid foreign key constraint
         List<Split> splits = splitRepository.findByExpense(expense);
         if (!splits.isEmpty()) {
             splitRepository.deleteAll(splits);
@@ -233,34 +277,27 @@ public class ExpenseService {
 
         Expense saved = expenseRepository.save(expense);
 
-        // Handle splits based on settlement status
-        // Handle splits based on settlement status
         List<Split> existingSplits = splitRepository.findByExpense(saved);
 
         if (!existingSplits.isEmpty()) {
 
-            // Get only the SETTLED splits to find original base amount
             List<Split> settledSplits = existingSplits.stream()
                     .filter(Split::getSettled)
                     .collect(Collectors.toList());
 
-            // If there are ANY settled splits, use settled amount as base
             if (!settledSplits.isEmpty()) {
 
                 Group group = saved.getGroup();
                 List<User> members = group.getMembers();
                 User paidBy = saved.getPaidBy();
-
                 int memberCount = members.size();
 
-                // Original settled total = settled amount per person × memberCount
                 double settledAmountPerPerson = settledSplits.stream()
                         .mapToDouble(Split::getAmount)
                         .average()
                         .orElse(0);
                 double originalSettledTotal = settledAmountPerPerson * memberCount;
 
-                // New share per person based on new total
                 double newSharePerPerson = saved.getTotalAmount() / memberCount;
                 double settledSharePerPerson = originalSettledTotal / memberCount;
 
@@ -272,7 +309,6 @@ public class ExpenseService {
                         originalSettledTotal, saved.getTotalAmount(),
                         settledSharePerPerson, newSharePerPerson, difference);
 
-                // Delete any existing UNSETTLED splits (from previous edits)
                 List<Split> unsettledSplits = existingSplits.stream()
                         .filter(s -> !s.getSettled())
                         .collect(Collectors.toList());
@@ -281,7 +317,6 @@ public class ExpenseService {
                 }
 
                 if (difference > 0.01) {
-                    // Amount increased vs original — others owe paidBy the difference
                     List<Split> newSplits = new ArrayList<>();
                     for (User member : members) {
                         if (member.getId().equals(paidBy.getId())) continue;
@@ -298,7 +333,6 @@ public class ExpenseService {
                     splitRepository.saveAll(newSplits);
 
                 } else if (difference < -0.01) {
-                    // Amount decreased vs original — paidBy owes others back
                     double refundPerPerson = Math.round(
                             Math.abs(difference) * 100.0) / 100.0;
                     List<Split> refundSplits = new ArrayList<>();
@@ -316,10 +350,8 @@ public class ExpenseService {
                     }
                     splitRepository.saveAll(refundSplits);
                 }
-                // difference == 0 → amount same as original settled, nothing to do
 
             } else {
-                // No settled splits — delete all and re-split full amount fresh
                 splitRepository.deleteAll(existingSplits);
 
                 Group group = saved.getGroup();
@@ -346,6 +378,21 @@ public class ExpenseService {
         }
 
         return mapToExpenseResponse(saved);
+    }
+
+    // ─── 8. Get Recent Expenses ───────────────────────────────────────────
+
+    public List<ExpenseDTOs.ExpenseResponse> getRecentExpenses(String userEmail) {
+        User user = getUserByEmail(userEmail);
+        List<Group> groups = groupRepository.findGroupsByMember(user);
+
+        return groups.stream()
+                .flatMap(group -> expenseRepository
+                        .findByGroupIdOrderByCreatedAtDesc(group.getId()).stream())
+                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .limit(8)
+                .map(this::mapToExpenseResponse)
+                .collect(Collectors.toList());
     }
 
     // ─── HELPER METHODS ───────────────────────────────────────────────────
@@ -397,17 +444,5 @@ public class ExpenseService {
                 .createdAt(expense.getCreatedAt())
                 .splitCount(splitRepository.countByExpense(expense))
                 .build();
-    }
-    public List<ExpenseDTOs.ExpenseResponse> getRecentExpenses(String userEmail) {
-        User user = getUserByEmail(userEmail);
-        List<Group> groups = groupRepository.findGroupsByMember(user);
-
-        return groups.stream()
-                .flatMap(group -> expenseRepository
-                        .findByGroupIdOrderByCreatedAtDesc(group.getId()).stream())
-                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-                .limit(8)
-                .map(this::mapToExpenseResponse)
-                .collect(Collectors.toList());
     }
 }

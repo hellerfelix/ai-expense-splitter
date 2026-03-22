@@ -2,6 +2,8 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Support from './pages/Support';
+import JoinGroup from './pages/JoinGroup';
+import ErrorBoundary from './pages/ErrorBoundary';
 
 // Pages (we'll create these next)
 import './index.css';
@@ -20,7 +22,7 @@ const ProtectedRoute = ({ children }) => {
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
     </div>
   );
-  return user ? children : <Navigate to="/login" />;
+  return user ? children : <Navigate to={`/login?redirect=${window.location.pathname}`} />;
 };
 
 function AppRoutes() {
@@ -44,6 +46,8 @@ function AppRoutes() {
 <Route path="/support" element={
   <ProtectedRoute><Support /></ProtectedRoute>
 } />
+
+<Route path="/join/:token" element={<JoinGroup />} />
     </Routes>
   );
 }
@@ -52,7 +56,9 @@ function App() {
   return (
     <AuthProvider>
       <Router>
-        <AppRoutes />
+        <ErrorBoundary>
+          <AppRoutes />
+        </ErrorBoundary>
       </Router>
     </AuthProvider>
   );
