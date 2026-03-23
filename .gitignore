@@ -4,6 +4,8 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+echo "src/main/resources/application.properties" >> .gitignore
+
 ### STS ###
 .apt_generated
 .classpath
