@@ -6,6 +6,7 @@ import helix.example.demo.expense.ExpenseRepository;
 import helix.example.demo.split.SplitRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -22,6 +23,9 @@ public class GroupService {
     private final ExpenseRepository expenseRepository;
     private final SplitRepository splitRepository;
 
+    @Value("${app.frontend.url}")
+    private String frontendUrl;
+
     // Create a new group
     public GroupDTOs.GroupResponse createGroup(
             GroupDTOs.CreateGroupRequest request, String creatorEmail) {
@@ -34,7 +38,6 @@ public class GroupService {
                 .createdBy(creator)
                 .build();
 
-        // Creator is automatically a member
         group.getMembers().add(creator);
         Group saved = groupRepository.save(group);
 
@@ -74,18 +77,15 @@ public class GroupService {
         Group group = groupRepository.findById(UUID.fromString(groupId))
                 .orElseThrow(() -> new RuntimeException("Group not found"));
 
-        // Only creator can add members
         if (!group.getCreatedBy().getEmail().equals(requesterEmail)) {
             throw new RuntimeException("Only group creator can add members");
         }
 
-        // Find user to add
         User newMember = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException(
                         "No user found with email: " + request.getEmail() +
                                 ". Ask them to register first."));
 
-        // FIX: use stream with getId() instead of .contains() for reliable check
         boolean alreadyMember = group.getMembers().stream()
                 .anyMatch(m -> m.getId().equals(newMember.getId()));
         if (alreadyMember) {
@@ -121,7 +121,7 @@ public class GroupService {
         return mapToGroupResponse(groupRepository.save(group));
     }
 
-    // Delete group — must remove splits and expenses first due to FK constraints
+    // Delete group
     @Transactional
     public void deleteGroup(String groupId, String userEmail) {
         Group group = groupRepository.findById(UUID.fromString(groupId))
@@ -132,18 +132,12 @@ public class GroupService {
         }
 
         UUID gid = UUID.fromString(groupId);
-
-        // 1. Delete all splits (has direct FK to both group_id AND expense_id)
         splitRepository.deleteByGroupId(gid);
-
-        // 2. Delete all expenses
         expenseRepository.deleteByGroupId(gid);
-
-        // 3. Delete the group (JPA auto-clears group_members join table)
         groupRepository.delete(group);
     }
 
-    // Generate invite link for a group
+    // Generate invite link
     public GroupDTOs.InviteLinkResponse generateInviteLink(String groupId, String userEmail) {
         User user = userRepository.findByEmail(userEmail)
                 .orElseThrow(() -> new RuntimeException("User not found"));
@@ -157,12 +151,13 @@ public class GroupService {
         groupRepository.save(group);
 
         GroupDTOs.InviteLinkResponse response = new GroupDTOs.InviteLinkResponse();
-        response.setInviteLink("http://localhost:3000/join/" + token);
+        // FIX: use environment variable instead of hardcoded localhost
+        response.setInviteLink(frontendUrl + "/join/" + token);
         response.setExpiresAt(group.getInviteExpiry());
         return response;
     }
 
-    // Join group via invite link — FIX 3: token invalidated after use
+    // Join group via invite link
     public void joinByInviteLink(String token, String userEmail) {
         User user = userRepository.findByEmail(userEmail)
                 .orElseThrow(() -> new RuntimeException("User not found"));
@@ -175,7 +170,6 @@ public class GroupService {
             throw new RuntimeException("Invite link has expired");
         }
 
-        // FIX: use stream with getId() instead of .contains() for reliable check
         boolean alreadyMember = group.getMembers().stream()
                 .anyMatch(m -> m.getId().equals(user.getId()));
         if (alreadyMember) {
@@ -183,11 +177,8 @@ public class GroupService {
         }
 
         group.getMembers().add(user);
-
-        // FIX 3: invalidate token after single use
         group.setInviteToken(null);
         group.setInviteExpiry(null);
-
         groupRepository.save(group);
     }
 
