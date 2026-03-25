@@ -322,7 +322,16 @@ export default function GroupDetail() {
       doc.setTextColor(180, 180, 180);
       doc.text(`SplitSmart  |  ${group?.name}  |  Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 8);
     }
-    doc.save(`${group?.name}-expenses.pdf`);
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+if (isMobile) {
+  // Open in new tab on mobile
+  const pdfBlob = doc.output('blob');
+  const url = URL.createObjectURL(pdfBlob);
+  window.open(url, '_blank');
+} else {
+  // Auto download on desktop
+  doc.save(`${group?.name}-expenses.pdf`);
+}
   };
 
   const getExpenseTypeIcon = (type) => {
