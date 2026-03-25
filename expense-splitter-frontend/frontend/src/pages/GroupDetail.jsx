@@ -41,6 +41,9 @@ export default function GroupDetail() {
   const [deleteExpenseId, setDeleteExpenseId] = useState(null);
   const [deleteExpenseSource, setDeleteExpenseSource] = useState(null);
 
+  const [showPdfModal, setShowPdfModal] = useState(false);
+const [pdfDataUri, setPdfDataUri] = useState(null);
+
   const fetchAll = useCallback(async () => {
     try {
       const [groupRes, expenseRes, balanceRes] = await Promise.all([
@@ -316,26 +319,23 @@ export default function GroupDetail() {
     }
 
     const pageCount = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.setTextColor(180, 180, 180);
-      doc.text(`SplitSmart  |  ${group?.name}  |  Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 8);
-    }
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+for (let i = 1; i <= pageCount; i++) {
+  doc.setPage(i);
+  doc.setFontSize(8);
+  doc.setTextColor(180, 180, 180);
+  doc.text(`SplitSmart  |  ${group?.name}  |  Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 8);
+}
+
+const pdfDataUri = doc.output('datauristring');
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 if (isMobile) {
-  // Use data URI instead of blob URL on mobile — doesn't get revoked
-  const pdfDataUri = doc.output('datauristring');
-  const link = document.createElement('a');
-  link.href = pdfDataUri;
-  link.download = `${group?.name}-expenses.pdf`;
-  link.target = '_blank';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  setPdfDataUri(pdfDataUri);
+  setShowPdfModal(true);
 } else {
   doc.save(`${group?.name}-expenses.pdf`);
 }
+
   };
 
   const getExpenseTypeIcon = (type) => {
@@ -919,8 +919,27 @@ if (isMobile) {
               </button>
             </div>
           </div>
+          {/* PDF Viewer Modal for Mobile */}
+{showPdfModal && (
+  <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex flex-col">
+    <div className="flex items-center justify-between px-4 py-3 bg-white">
+      <h2 className="font-bold text-gray-800">📄 {group?.name} Report</h2>
+      <button
+        onClick={() => setShowPdfModal(false)}
+        className="text-gray-600 font-bold text-lg px-3 py-1 rounded-lg bg-gray-100">
+        ✕ Close
+      </button>
+    </div>
+    <iframe
+      src={pdfDataUri}
+      className="flex-1 w-full"
+      title="PDF Report"
+    />
+  </div>
+)}
         </div>
       )}
+      
     </div>
   );
 }
