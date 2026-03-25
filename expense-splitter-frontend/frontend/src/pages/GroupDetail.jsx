@@ -324,12 +324,16 @@ export default function GroupDetail() {
     }
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 if (isMobile) {
-  // Open in new tab on mobile
-  const pdfBlob = doc.output('blob');
-  const url = URL.createObjectURL(pdfBlob);
-  window.open(url, '_blank');
+  // Use data URI instead of blob URL on mobile — doesn't get revoked
+  const pdfDataUri = doc.output('datauristring');
+  const link = document.createElement('a');
+  link.href = pdfDataUri;
+  link.download = `${group?.name}-expenses.pdf`;
+  link.target = '_blank';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 } else {
-  // Auto download on desktop
   doc.save(`${group?.name}-expenses.pdf`);
 }
   };
